@@ -2,7 +2,16 @@
 
 A Claude-powered agent harness for the development cycle, written in Go. It's built on the official [Anthropic Go SDK](https://github.com/anthropics/anthropic-sdk-go) and its tool runner.
 
-Today it does **PR review** and **PR triage**. The [roadmap](#roadmap) extends it to the rest of the cycle: planning, implementation, CI fixes, deploys and monitoring.
+It takes work from issue to merge-ready PR:
+
+```
+devloop plan       issue  ──►  structured implementation plan (plan-N.json)
+devloop implement  plan   ──►  code + tests in an isolated worktree ──► (draft PR)
+devloop review     PR     ──►  severity-ranked findings
+devloop triage     repo   ──►  prioritised table of open PRs
+```
+
+The [roadmap](#roadmap) covers what's next: CI fixes, deploys and monitoring.
 
 ## Install
 
@@ -19,7 +28,37 @@ export GITHUB_TOKEN=ghp_...         # read access to the repo; pull-request writ
 export ANTHROPIC_API_KEY=sk-ant-... # or log in with `ant auth login`
 ```
 
+Requirements: Go 1.25+, `git`, and for `implement` the [Claude Code](https://code.claude.com) CLI (`claude`) on your PATH.
+
 ## Usage
+
+### Plan and implement an issue
+
+```bash
+# 1. Plan: reads the issue and the code, writes plan-42.json (and prints it)
+devloop plan -repo-dir . owner/repo 42
+devloop plan -repo-dir . -post owner/repo 42      # also comment the plan on the issue
+
+# 2. Implement: Claude Code writes the change in a separate worktree,
+#    devloop re-runs your tests and commits on branch devloop/issue-42
+devloop implement -plan plan-42.json -repo-dir . -test "go test ./..."
+
+# 3. When it looks right, push and open a draft PR (asks first; -yes skips the question)
+devloop implement -plan plan-42.json -repo-dir . -test "go test ./..." -push
+```
+
+You can edit `plan-42.json` between steps 1 and 2. That's the moment to correct the approach before any code is written.
+
+What `implement` does, and what it won't do:
+
+1. Creates a **git worktree** on a new branch from the fresh base (origin's default branch, or `-base`). Your checkout is never touched.
+2. Runs **Claude Code headless** (`claude -p`) in the worktree with the plan as its task. It can only read and edit files and run **your test command**. Every other shell command is denied (`--permission-mode dontAsk`). The run is capped at `-max-budget` USD (default 5).
+3. **Re-runs the tests itself.** If they fail, nothing is committed and the worktree is kept for you to inspect.
+4. **Commits** on the branch. It pushes and opens a **draft** PR (`Closes #42`) only with `-push`, and only after you confirm.
+
+With `ANTHROPIC_API_KEY` set, Claude Code runs with `--bare`. In that mode it ignores hooks, plugins, MCP servers and CLAUDE.md, both yours and the repo's, so every machine gets the same result. Without a key it uses your normal Claude Code login and configuration.
+
+### Review and triage PRs
 
 ```bash
 # Review a PR (printed as Markdown)
@@ -36,7 +75,7 @@ devloop review -post owner/repo 123
 devloop triage -limit 20 -stale-days 10 owner/repo
 ```
 
-Flags shared by both commands:
+Flags shared by `plan`, `review` and `triage`:
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -51,17 +90,21 @@ Every run prints its turn count and token usage.
 ## How it works
 
 ```
-main.go ──► agent.RunReview / RunTriage
+main.go ──► agent.RunPlan / RunReview / RunTriage
                │  system prompt: prompts/*.md (embedded into the binary)
                │  loop: client.Beta.Messages.NewToolRunner(...)
                │
                ├── read tools ──► internal/ghclient (go-github)
-               │     list_open_prs, get_pr, get_pr_checks, get_pr_reviews, get_file
+               │     get_issue, list_open_prs, get_pr, get_pr_checks, get_pr_reviews, get_file
                ├── local tools (only with -repo-dir)
                │     read_local_file, grep_local, list_local_files
-               └── submit_review / submit_triage  ◄── the agent's structured result
+               └── submit_plan / submit_review / submit_triage  ◄── structured result
                                 │
 main.go renders it as Markdown or JSON, or posts it (-post)
+
+cmd_implement.go ──► internal/workspace (git worktree, commit, push)
+                 ──► internal/coder     (claude -p, locked-down tool allowlist)
+                 ──► re-run tests ──► commit ──► (push + draft PR)
 ```
 
 The design choices that matter:
@@ -95,17 +138,17 @@ newTool(verbose, "get_job_logs", "Get the log of a failed CI job.",
 |---|---|---|---|
 | Review | `review` ✅ | GitHub reads | Optional comment (`-post`) |
 | Triage | `triage` ✅ | GitHub reads | – |
-| Plan | `plan <issue>` | Issues, Asana, Slack; repo reads | – |
-| Implement | `implement <issue>` | Edit, build and test in a git worktree; open a PR | Code, PR |
+| Plan | `plan` ✅ | Issue + repo reads | Optional comment (`-post`) |
+| Implement | `implement` ✅ | Claude Code in a worktree; your test command | Commit; draft PR with `-push` |
 | Fix CI | `ci-fix <pr>` | Job logs; edit, test, push | Code |
 | Deploy | `deploy <pr>` | Deploy CLI (e.g. `statwolf bundle`) | Servers |
 | Monitor | `watch` | Logs, metrics, Slack alerts | – |
 
-The coding stages (implement, fix CI) will hand the editing work to Claude Code in headless mode (`claude -p … --output-format json`) inside an isolated worktree. devloop orchestrates, gathers context, and keeps a human approval step before anything is pushed or deployed.
+`ci-fix` will reuse the `implement` machinery (worktree, Claude Code, re-verification), with the failing job's logs as the task. Next on the list: pulling issues from Asana and Slack in `plan`.
 
 ## Development
 
 ```bash
 go vet ./...
-go test ./...   # includes an end-to-end tool-loop test against a fake Claude API
+go test ./...   # offline: fake Claude API, fake claude CLI, real git
 ```

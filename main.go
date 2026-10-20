@@ -1,4 +1,5 @@
-// Command devloop reviews and triages GitHub pull requests with Claude.
+// Command devloop runs Claude-powered agents over the development cycle:
+// planning issues, implementing them, and reviewing and triaging PRs.
 package main
 
 import (
@@ -18,15 +19,18 @@ import (
 	"github.com/enricoconvento98/devloop/internal/ghclient"
 )
 
-const usage = `devloop — PR review & triage agent powered by Claude
+const usage = `devloop — Claude-powered agents for the development cycle
 
 Usage:
-  devloop review [flags] <owner/repo> <pr-number>
-  devloop triage [flags] <owner/repo>
+  devloop plan      [flags] <owner/repo> <issue-number>   issue → implementation plan
+  devloop implement [flags] -plan <plan.json>            plan → tested commit (→ draft PR)
+  devloop review    [flags] <owner/repo> <pr-number>      PR → findings
+  devloop triage    [flags] <owner/repo>                  open PRs → priorities
 
 Run "devloop <command> -h" for the flags of a command.
 
-Env: GITHUB_TOKEN (required), ANTHROPIC_API_KEY (or an "ant auth login" profile)`
+Env: GITHUB_TOKEN, ANTHROPIC_API_KEY (or an "ant auth login" profile).
+implement also needs the claude CLI (Claude Code) on PATH.`
 
 func main() {
 	if len(os.Args) < 2 {
@@ -42,6 +46,10 @@ func main() {
 		err = reviewCmd(ctx, os.Args[2:])
 	case "triage":
 		err = triageCmd(ctx, os.Args[2:])
+	case "plan":
+		err = planCmd(ctx, os.Args[2:])
+	case "implement":
+		err = implementCmd(ctx, os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Println(usage)
 	default:

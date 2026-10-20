@@ -168,3 +168,29 @@ func TestGlobToRegexp(t *testing.T) {
 		}
 	}
 }
+
+func (fakeGitHub) GetIssue(_ context.Context, n int) (*ghclient.Issue, error) {
+	return &ghclient.Issue{Number: n, Title: "Discounts go negative", URL: "https://example.com/1", DefaultBranch: "main"}, nil
+}
+
+func TestRunPlanLoop(t *testing.T) {
+	srv, requests := scriptedAPI(t,
+		msg("tool_use", `{"type":"tool_use","id":"tu1","name":"get_issue","input":{"number":4}}`),
+		msg("tool_use", `{"type":"tool_use","id":"tu2","name":"submit_plan","input":{"summary":"Divide by 100.","approach":"Fix in place.","steps":[{"title":"Fix","files":["discount.js"],"details":"Use percent/100."}],"test_plan":"npm test","risks":[],"open_questions":[]}}`),
+		msg("end_turn", `{"type":"text","text":"Done."}`),
+	)
+	pf, _, err := RunPlan(context.Background(), anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAPIKey("test"), option.WithMaxRetries(0)), fakeGitHub{}, ghclient.Repo{Owner: "acme", Name: "shop"}, 4,
+		Options{Model: "m", Effort: "high", MaxTurns: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pf.Issue.Repo != "acme/shop" || pf.Issue.Title != "Discounts go negative" || pf.Base != "main" {
+		t.Errorf("issue/base not filled from GitHub: %+v", pf)
+	}
+	if len(pf.Plan.Steps) != 1 || pf.Plan.Steps[0].Files[0] != "discount.js" {
+		t.Errorf("unexpected plan: %+v", pf.Plan)
+	}
+	if len(*requests) != 3 {
+		t.Errorf("requests = %d, want 3", len(*requests))
+	}
+}

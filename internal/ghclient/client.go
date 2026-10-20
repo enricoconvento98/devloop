@@ -41,6 +41,9 @@ type API interface {
 	GetReviews(ctx context.Context, number int) (*Reviews, error)
 	GetFile(ctx context.Context, path, ref string) (string, error)
 	PostReview(ctx context.Context, number int, commitSHA, body string, comments []InlineComment) (string, error)
+	GetIssue(ctx context.Context, number int) (*Issue, error)
+	CommentOnIssue(ctx context.Context, number int, body string) (string, error)
+	CreateDraftPR(ctx context.Context, head, base, title, body string) (string, error)
 }
 
 type Client struct {
@@ -332,4 +335,81 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+type IssueComment struct {
+	Author    string    `json:"author"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Issue struct {
+	Number        int            `json:"number"`
+	Title         string         `json:"title"`
+	Body          string         `json:"body"`
+	URL           string         `json:"url"`
+	State         string         `json:"state"`
+	Author        string         `json:"author"`
+	Labels        []string       `json:"labels"`
+	DefaultBranch string         `json:"default_branch"`
+	Comments      []IssueComment `json:"comments"`
+}
+
+func (c *Client) GetIssue(ctx context.Context, number int) (*Issue, error) {
+	issue, _, err := c.gh.Issues.Get(ctx, c.repo.Owner, c.repo.Name, number)
+	if err != nil {
+		return nil, err
+	}
+	if issue.IsPullRequest() {
+		return nil, fmt.Errorf("#%d is a pull request, not an issue", number)
+	}
+	repo, _, err := c.gh.Repositories.Get(ctx, c.repo.Owner, c.repo.Name)
+	if err != nil {
+		return nil, err
+	}
+	comments, _, err := c.gh.Issues.ListComments(ctx, c.repo.Owner, c.repo.Name, number,
+		&github.IssueListCommentsOptions{ListOptions: github.ListOptions{PerPage: 100}})
+	if err != nil {
+		return nil, err
+	}
+	out := &Issue{
+		Number:        issue.GetNumber(),
+		Title:         issue.GetTitle(),
+		Body:          issue.GetBody(),
+		URL:           issue.GetHTMLURL(),
+		State:         issue.GetState(),
+		Author:        issue.GetUser().GetLogin(),
+		DefaultBranch: repo.GetDefaultBranch(),
+	}
+	for _, l := range issue.Labels {
+		out.Labels = append(out.Labels, l.GetName())
+	}
+	for _, cm := range comments {
+		out.Comments = append(out.Comments, IssueComment{cm.GetUser().GetLogin(), truncate(cm.GetBody(), 2_000), cm.GetCreatedAt().Time})
+	}
+	return out, nil
+}
+
+// CommentOnIssue adds a comment to an issue or PR and returns its URL.
+func (c *Client) CommentOnIssue(ctx context.Context, number int, body string) (string, error) {
+	cm, _, err := c.gh.Issues.CreateComment(ctx, c.repo.Owner, c.repo.Name, number, &github.IssueComment{Body: github.Ptr(body)})
+	if err != nil {
+		return "", err
+	}
+	return cm.GetHTMLURL(), nil
+}
+
+// CreateDraftPR opens a draft pull request and returns its URL.
+func (c *Client) CreateDraftPR(ctx context.Context, head, base, title, body string) (string, error) {
+	pr, _, err := c.gh.PullRequests.Create(ctx, c.repo.Owner, c.repo.Name, github.CreatePullRequest{
+		Title: github.Ptr(title),
+		Head:  head,
+		Base:  base,
+		Body:  github.Ptr(body),
+		Draft: github.Ptr(true),
+	})
+	if err != nil {
+		return "", err
+	}
+	return pr.GetHTMLURL(), nil
 }
