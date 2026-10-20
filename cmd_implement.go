@@ -56,7 +56,7 @@ func implementCmd(ctx context.Context, args []string) error {
 		fmt.Fprintln(fs.Output(), "Usage: devloop implement [flags] -plan <plan.json>")
 		fs.PrintDefaults()
 	}
-	fs.Parse(args)
+	parseFlags(fs, args)
 	if *planPath == "" || fs.NArg() != 0 {
 		fs.Usage()
 		os.Exit(2)
@@ -87,6 +87,10 @@ func implementCmd(ctx context.Context, args []string) error {
 			return err
 		}
 		*worktreeDir = filepath.Join(cache, "devloop", "worktrees", filepath.Base(repoAbs)+"-"+slug(*branch))
+	}
+	// git and Claude Code run in different directories, so the path must not be relative.
+	if *worktreeDir, err = filepath.Abs(*worktreeDir); err != nil {
+		return err
 	}
 
 	baseRef, err := workspace.ResolveBase(ctx, repoAbs, *base)

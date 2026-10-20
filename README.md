@@ -28,9 +28,46 @@ export GITHUB_TOKEN=ghp_...         # read access to the repo; pull-request writ
 export ANTHROPIC_API_KEY=sk-ant-... # or log in with `ant auth login`
 ```
 
-Requirements: Go 1.25+, `git`, and for `implement` the [Claude Code](https://code.claude.com) CLI (`claude`) on your PATH.
+Requirements: Go 1.26+, `git`, and for `implement` the [Claude Code](https://code.claude.com) CLI (`claude`) on your PATH.
 
 ## Usage
+
+### Task list: TUI, web dashboard, CLI
+
+Any devloop command can run as a **background task**, so you can queue several and watch them:
+
+```bash
+devloop                      # interactive TUI: live task list, logs, queue/cancel/retry
+devloop serve                # web dashboard on http://127.0.0.1:7777
+```
+
+![devloop dashboard](docs/dashboard.png)
+
+Both run queued tasks themselves; use `-no-worker` to only watch, and `-concurrency N` to run more at once (default 2). You can run both at the same time: a task is never claimed twice. Queue tasks from the TUI (`n`), the dashboard's input box, or the shell:
+
+```bash
+devloop add review owner/repo 12          # queue; prints the task id
+devloop add implement -plan plan-42.json -repo-dir . -test "go test ./..."
+devloop tasks -w                          # live table in the terminal
+devloop logs -f 3                         # follow a task's output
+devloop cancel 3 · devloop retry 3
+devloop worker                            # run the queue with no UI (e.g. on a server)
+```
+
+| TUI key | Action |
+|---|---|
+| `↑/↓` or `j/k` | select a task |
+| `enter` | open its log (live; `f` toggles follow) |
+| `n` | queue a new task (type the command as you would after `devloop`) |
+| `c` / `r` | cancel / retry |
+| `esc` / `q` | back / quit (asks first if tasks are still running) |
+
+How it works:
+
+- **Storage.** Tasks are kept in a SQLite file in `~/.devloop` (or `$DEVLOOP_HOME`). Each task's output goes to `~/.devloop/logs/<id>.log`.
+- **Execution.** Each task runs as a `devloop <command>` subprocess, in the directory it was queued from, so relative paths like `-plan plan-42.json` work.
+- **Confirmations.** Tasks never get a terminal, so `implement -push` pushes only if you add `-yes`. Without it, the task stops at a tested local commit.
+- **Dashboard security.** The dashboard can run commands with your GitHub and Anthropic credentials, so it listens only on loopback and rejects requests whose Host header isn't localhost (this blocks DNS rebinding). Every API call also needs a token that's generated at startup and known only to the page, so no other website can queue tasks.
 
 ### Plan and implement an issue
 
@@ -102,6 +139,9 @@ main.go ──► agent.RunPlan / RunReview / RunTriage
                                 │
 main.go renders it as Markdown or JSON, or posts it (-post)
 
+cmd_tasks.go ──► internal/tasks (SQLite queue + worker) ◄── internal/tui (Bubble Tea)
+                                                      ◄── internal/web (dashboard + JSON API)
+
 cmd_implement.go ──► internal/workspace (git worktree, commit, push)
                  ──► internal/coder     (claude -p, locked-down tool allowlist)
                  ──► re-run tests ──► commit ──► (push + draft PR)
@@ -150,5 +190,5 @@ newTool(verbose, "get_job_logs", "Get the log of a failed CI job.",
 
 ```bash
 go vet ./...
-go test ./...   # offline: fake Claude API, fake claude CLI, real git
+go test -race ./...   # offline: fake Claude API, fake claude CLI, real git and SQLite
 ```

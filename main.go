@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -22,23 +23,41 @@ import (
 const usage = `devloop — Claude-powered agents for the development cycle
 
 Usage:
+  devloop                                                 open the interactive task view (TUI)
+  devloop serve [-addr 127.0.0.1:7777]                    web dashboard of the task list
+
+Agents (run now, in this terminal):
   devloop plan      [flags] <owner/repo> <issue-number>   issue → implementation plan
   devloop implement [flags] -plan <plan.json>            plan → tested commit (→ draft PR)
   devloop review    [flags] <owner/repo> <pr-number>      PR → findings
   devloop triage    [flags] <owner/repo>                  open PRs → priorities
 
-Run "devloop <command> -h" for the flags of a command.
+Task list (run in the background, monitor from the TUI or the web page):
+  devloop add <command> [args...]                        queue a task, e.g. devloop add review owner/repo 12
+  devloop tasks [-w]                                      list tasks (-w: keep refreshing)
+  devloop logs [-f] <id>                                  show a task's output (-f: follow)
+  devloop cancel <id> | retry <id>
+  devloop worker [-concurrency 2]                         run queued tasks without a UI
+
+Run "devloop <command> -h" for the flags of a command. Tasks are stored in ~/.devloop ($DEVLOOP_HOME).
 
 Env: GITHUB_TOKEN, ANTHROPIC_API_KEY (or an "ant auth login" profile).
 implement also needs the claude CLI (Claude Code) on PATH.`
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	if len(os.Args) < 2 {
+		if isTerminal(os.Stdin) && isTerminal(os.Stdout) {
+			if err := uiCmd(ctx, nil); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+			return
+		}
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 
 	var err error
 	switch os.Args[1] {
@@ -50,6 +69,22 @@ func main() {
 		err = planCmd(ctx, os.Args[2:])
 	case "implement":
 		err = implementCmd(ctx, os.Args[2:])
+	case "ui":
+		err = uiCmd(ctx, os.Args[2:])
+	case "serve":
+		err = serveCmd(ctx, os.Args[2:])
+	case "worker":
+		err = workerCmd(ctx, os.Args[2:])
+	case "add":
+		err = addCmd(ctx, os.Args[2:])
+	case "tasks":
+		err = tasksCmd(ctx, os.Args[2:])
+	case "logs":
+		err = logsCmd(ctx, os.Args[2:])
+	case "cancel":
+		err = cancelCmd(ctx, os.Args[2:])
+	case "retry":
+		err = retryCmd(ctx, os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Println(usage)
 	default:
@@ -90,7 +125,7 @@ func reviewCmd(ctx context.Context, args []string) error {
 		fmt.Fprintln(fs.Output(), "Usage: devloop review [flags] <owner/repo> <pr-number>")
 		fs.PrintDefaults()
 	}
-	fs.Parse(args)
+	parseFlags(fs, args)
 	if fs.NArg() != 2 {
 		fs.Usage()
 		os.Exit(2)
@@ -165,7 +200,7 @@ func triageCmd(ctx context.Context, args []string) error {
 		fmt.Fprintln(fs.Output(), "Usage: devloop triage [flags] <owner/repo>")
 		fs.PrintDefaults()
 	}
-	fs.Parse(args)
+	parseFlags(fs, args)
 	if fs.NArg() != 1 {
 		fs.Usage()
 		os.Exit(2)

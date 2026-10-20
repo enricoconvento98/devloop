@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>devloop tasks</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --border: #e3e3de;
+    --accent: #2f5bea; --ok: #1f8a4c; --bad: #c4372d; --warn: #b7791f; --run: #2f5bea;
+    --code-bg: #f0f0ec; --on-accent: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141413; --panel: #1d1d1b; --text: #ecebe6; --muted: #9a998f; --border: #33332f;
+      --accent: #7c9cff; --ok: #4cc27f; --bad: #f0786d; --warn: #e6b450; --run: #7c9cff;
+      --code-bg: #121211; --on-accent: #141413;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+    padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  h1 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
+  .counts { color: var(--muted); font-size: 13px; }
+  .counts b { color: var(--text); font-weight: 600; }
+  main { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; padding: 16px 24px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 16px; } header { padding: 16px; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  form { display: flex; gap: 8px; padding: 12px; border-bottom: 1px solid var(--border); }
+  input[type=text] { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  button { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel);
+    color: var(--text); font: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 500; }
+  button:hover { filter: brightness(0.96); }
+  .hint { padding: 0 12px 10px; color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--border); }
+  .hint code { font-size: 12px; }
+  .error { color: var(--bad); padding: 8px 12px; font-size: 13px; }
+  .error:empty { display: none; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  col.c-id { width: 44px; } col.c-status { width: 124px; } col.c-time { width: 64px; }
+  @media (max-width: 520px) { col.c-id { width: 36px; } col.c-status { width: 104px; } col.c-time { width: 52px; } td, th { padding-left: 8px; padding-right: 8px; } }
+  th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; padding: 8px 12px;
+    border-bottom: 1px solid var(--border); }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr.task { cursor: pointer; }
+  tr.task:hover td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+  tr.task.selected td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .cmd { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+  .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .sub.err { color: var(--bad); }
+  .sub { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+  .num { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .queued .dot { background: var(--muted); }
+  .running .dot, .cancel_requested .dot { background: var(--run); animation: pulse 1.2s infinite; }
+  .succeeded .dot { background: var(--ok); }
+  .failed .dot { background: var(--bad); }
+  .canceled .dot { background: var(--warn); }
+  @keyframes pulse { 50% { opacity: 0.3; } }
+  .empty { padding: 32px 12px; text-align: center; color: var(--muted); }
+  .detail-head { display: flex; align-items: center; gap: 8px; padding: 12px; border-bottom: 1px solid var(--border); }
+  .detail-head .cmd { flex: 1; }
+  pre { margin: 0; padding: 12px; background: var(--code-bg); height: calc(100vh - 190px); min-height: 300px;
+    overflow: auto; white-space: pre-wrap; word-break: break-word; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  @media (max-width: 900px) { pre { height: 60vh; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>devloop</h1>
+  <span class="counts" id="counts"></span>
+</header>
+<main>
+  <section class="panel">
+    <form id="add">
+      <input type="text" id="command" placeholder="review owner/repo 12" autocomplete="off" spellcheck="false">
+      <button class="primary" type="submit">Queue</button>
+    </form>
+    <div class="hint">Tasks run in <code>{{.Dir}}</code>. Commands: {{range $i, $k := .Kinds}}{{if $i}}, {{end}}<code>{{$k}}</code>{{end}}. Same flags as the CLI, e.g. <code>implement -plan plan-42.json -repo-dir ~/src/app -test "go test ./..."</code></div>
+    <div class="error" id="error"></div>
+    <table>
+      <colgroup><col class="c-id"><col class="c-status"><col><col class="c-time"></colgroup>
+      <thead><tr><th>#</th><th>Status</th><th>Task</th><th>Time</th></tr></thead>
+      <tbody id="tasks"></tbody>
+    </table>
+  </section>
+  <section class="panel" id="detail">
+    <div class="empty">Select a task to see its log.</div>
+  </section>
+</main>
+<script>
+const TOKEN = "{{.Token}}";
+let selected = null, tasks = [];
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { "X-Devloop-Token": TOKEN, "Content-Type": "application/json" } });
+  const body = await res.text();
+  if (!res.ok) throw new Error(body.trim() || res.statusText);
+  return res.headers.get("Content-Type")?.includes("json") ? JSON.parse(body) : body;
+}
+
+function el(tag, attrs = {}, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) k === "class" ? e.className = v : e.setAttribute(k, v);
+  for (const c of children) if (c != null) e.append(c);
+  return e;
+}
+
+const label = s => s.replace("_", " ");
+function duration(t) {
+  if (!t.started_at) return "";
+  const s = Math.round(((t.finished_at ? new Date(t.finished_at) : new Date()) - new Date(t.started_at)) / 1000);
+  return s < 1 ? "<1s" : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+const title = t => [t.kind, ...t.args.map(a => /[\s"'\\]/.test(a) || a === "" ? JSON.stringify(a) : a)].join(" ");
+
+function render() {
+  const n = s => tasks.filter(t => t.status === s).length;
+  document.getElementById("counts").innerHTML =
+    `<b>${n("running") + n("cancel_requested")}</b> running · <b>${n("queued")}</b> queued · ` +
+    `<b>${n("succeeded")}</b> done · <b>${n("failed")}</b> failed`;
+  const body = document.getElementById("tasks");
+  body.replaceChildren();
+  if (!tasks.length) body.append(el("tr", {}, el("td", { colspan: 4, class: "empty" }, "No tasks yet. Queue one above.")));
+  for (const t of tasks) {
+    const info = el("td", {}, el("div", { class: "cmd" }, title(t)));
+    if (t.error) info.append(el("div", { class: "sub err" }, t.error));
+    else if (t.summary) info.append(el("div", { class: "sub" }, t.summary));
+    const row = el("tr", { class: "task" + (t.id === selected ? " selected" : "") },
+      el("td", { class: "num" }, String(t.id)),
+      el("td", {}, el("span", { class: "badge " + t.status }, el("span", { class: "dot" }), label(t.status))),
+      info,
+      el("td", { class: "num" }, duration(t)));
+    row.onclick = () => { selected = t.id; render(); loadLog(true); };
+    body.append(row);
+  }
+  renderDetail();
+}
+
+function renderDetail() {
+  const box = document.getElementById("detail");
+  const t = tasks.find(t => t.id === selected);
+  if (!t) return;
+  let head = box.querySelector(".detail-head");
+  if (!head || head.dataset.id != t.id || head.dataset.status !== t.status) {
+    head = el("div", { class: "detail-head" },
+      el("span", { class: "badge " + t.status }, el("span", { class: "dot" }), label(t.status)),
+      el("span", { class: "cmd" }, `#${t.id}  ${title(t)}`));
+    head.dataset.id = t.id; head.dataset.status = t.status;
+    const act = (text, path) => { const b = el("button", {}, text); b.onclick = () => action(path); head.append(b); };
+    if (t.status === "queued" || t.status === "running") act("Cancel", `/api/tasks/${t.id}/cancel`);
+    if (["succeeded", "failed", "canceled"].includes(t.status)) act("Retry", `/api/tasks/${t.id}/retry`);
+    const pre = box.querySelector("pre") || el("pre", { id: "log" });
+    box.replaceChildren(head, pre);
+  }
+}
+
+async function action(path) {
+  try { const r = await api(path, { method: "POST" }); if (r.id) selected = r.id; await refresh(); loadLog(true); }
+  catch (e) { showError(e); }
+}
+
+async function loadLog(scroll) {
+  if (selected == null) return;
+  const pre = document.getElementById("log");
+  if (!pre) return;
+  const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
+  try { pre.textContent = (await api(`/api/tasks/${selected}/log`)) || "(no output yet)"; } catch (e) { pre.textContent = e.message; }
+  if (scroll || atBottom) pre.scrollTop = pre.scrollHeight;
+}
+
+function showError(e) { document.getElementById("error").textContent = e ? e.message : ""; }
+
+async function refresh() {
+  try { tasks = await api("/api/tasks"); showError(null); render(); } catch (e) { showError(e); }
+}
+
+document.getElementById("add").onsubmit = async ev => {
+  ev.preventDefault();
+  const input = document.getElementById("command");
+  try {
+    const r = await api("/api/tasks", { method: "POST", body: JSON.stringify({ command: input.value }) });
+    input.value = ""; selected = r.id; await refresh(); loadLog(true);
+  } catch (e) { showError(e); }
+};
+
+refresh();
+setInterval(() => { refresh(); const t = tasks.find(t => t.id === selected); if (t && !["succeeded","failed","canceled"].includes(t.status)) loadLog(false); }, 2000);
+</script>
+</body>
+</html>
