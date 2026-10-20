@@ -25,7 +25,7 @@ func planCmd(ctx context.Context, args []string) error {
 		fmt.Fprintln(fs.Output(), "Usage: devloop plan [flags] <owner/repo> <issue-number>")
 		fs.PrintDefaults()
 	}
-	fs.Parse(args)
+	parseFlags(fs, args)
 	if fs.NArg() != 2 {
 		fs.Usage()
 		os.Exit(2)

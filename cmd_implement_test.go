@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,7 +32,7 @@ func TestRenderImplementPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"issue #1", "### Step 1: Create b", "Files: b.txt", "exactly: `test -f b.txt`", "Uppercase or lowercase?"} {
+	for _, want := range []string{"issue #1", "### Step 1: Create b", "Files: b.txt", "exactly `test -f b.txt`", "Uppercase or lowercase?"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt missing %q:\n%s", want, p)
 		}
@@ -91,5 +92,18 @@ func TestImplementEndToEnd(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "nothing committed") {
 		t.Fatalf("err = %v, want test failure", err)
+	}
+}
+
+func TestParseFlagsInterspersed(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	limit := fs.Int("limit", 30, "")
+	v := fs.Bool("v", false, "")
+	parseFlags(fs, []string{"acme/shop", "-limit", "5", "extra", "-v", "--", "-not-a-flag"})
+	if *limit != 5 || !*v {
+		t.Errorf("limit=%d v=%v", *limit, *v)
+	}
+	if got := strings.Join(fs.Args(), " "); got != "acme/shop extra -not-a-flag" {
+		t.Errorf("args = %q", got)
 	}
 }

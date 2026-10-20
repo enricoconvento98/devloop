@@ -21,12 +21,16 @@ Files: {{join $s.Files ", "}}
 **Open questions:** these weren't settled when the plan was written. Pick the option most consistent with the codebase and the issue, and note your choice in your final message.
 {{range .Plan.OpenQuestions}}- {{.}}
 {{end}}{{end}}
+## Tools
+
+Use the Read, Glob and Grep tools to explore, and Edit and Write to change files. Shell commands are blocked, with one exception: the test command below, run on its own. Don't chain it with other commands (`cd`, `&&`, `;`, pipes), or the whole call is denied. A denied shell command doesn't mean the test command is blocked too.
+
 ## Rules
 
 - Read the code around each change before editing, and follow its conventions.
 - Keep the change to what the plan and the issue need. If the plan is wrong in a detail, do what the issue actually needs and say why in your final message.
 - Add or update tests as the test plan says.
-{{if .TestCommand}}- Run the tests with exactly: `{{.TestCommand}}`. Iterate until they pass. Don't skip, disable or weaken tests to make them pass.
+{{if .TestCommand}}- Run the tests with exactly `{{.TestCommand}}` (you may append arguments, such as a package path or `-run`). Run them before you finish and iterate until they pass. Don't skip, disable or weaken tests to make them pass.
 {{else}}- No test command was configured, so you can't run the tests. Make sure the code is correct by reading it carefully.
 {{end}}
 When you're done, reply with a short summary: what you changed, any deviation from the plan and why, and whether the tests pass.
